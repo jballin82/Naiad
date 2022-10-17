@@ -56,6 +56,10 @@ namespace Microsoft.Research.Naiad.Examples.WordCount
             // Each batch of records of type TRecord we receive, we must update counts.
             public override void OnReceive(Message<TRecord, Epoch> message)
             {
+                Console.WriteLine("Received OnReceive");
+                //me: NotifyAt for this time ... if we never see anything we never need to be notified of the end of the epoch
+                //of course in this example, there's only one vertex so it gets called on every epoch
+                // "Requests notification after all messages bearing the given time or earlier have been received"
                 this.NotifyAt(message.time);
 
                 // a message contains length valid records.
@@ -68,7 +72,7 @@ namespace Microsoft.Research.Naiad.Examples.WordCount
 
                     this.Counts[data] += 1;
 
-                    this.Changed.Add(data);
+                    this.Changed.Add(data); //it's a set, so re-adding won't add it again
                 }
             }
 
@@ -81,6 +85,7 @@ namespace Microsoft.Research.Naiad.Examples.WordCount
 
                 // reset observed records
                 this.Changed.Clear();
+                Console.WriteLine("Received OnNotify for Epoch: " + time.ToString());
             }
 
             // the UnaryVertex base class needs to know the index and stage of the vertex. 
@@ -105,7 +110,7 @@ namespace Microsoft.Research.Naiad.Examples.WordCount
                 var counts = computation.NewInput(source).StreamingCount();
 
                 // 3. Subscribe to the resulting stream with a callback to print the outputs.
-                counts.Subscribe(list => { foreach (var element in list) Console.WriteLine(element); });
+                counts.Subscribe(list => { foreach (var element in list) { Console.WriteLine(element); } });
 
                 computation.Activate();       // activate the execution of this graph (no new stages allowed).
 
@@ -118,6 +123,8 @@ namespace Microsoft.Research.Naiad.Examples.WordCount
                     // read lines of input and hand them to the input, until an empty line appears.
                     for (var line = Console.ReadLine(); line.Length > 0; line = Console.ReadLine())
                         source.OnNext(line.Split());
+
+                   
                 }
 
                 source.OnCompleted();   // signal the end of the input.

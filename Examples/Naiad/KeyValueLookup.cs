@@ -39,7 +39,7 @@ namespace Microsoft.Research.Naiad.Examples.KeyValueLookup
             return Foundry.NewBinaryStage(kvpairs, requests, (i, s) => new KeyValueLookupVertex<TKey, TValue>(i, s), x => x.First.GetHashCode(), y => y.GetHashCode(), null, "Lookup");
         }
 
-        /// <summary>
+        /// <summary
         /// A vertex storing (key, value) pairs received on one input, and reporting pairs requested on the other.
         /// Note: no attempt made at consistency; queueing updates or requests and using OnNotify could help out here.
         /// </summary>
@@ -79,12 +79,25 @@ namespace Microsoft.Research.Naiad.Examples.KeyValueLookup
         {
             using (var computation = NewComputation.FromArgs(ref args))
             {
+                // This graph has two inputs: the first corresponds to key/value pairs to be inserted
+                // the second is queries
                 var keyvals = new BatchedDataSource<Pair<string, string>>();
                 var queries = new BatchedDataSource<string>();
 
-                computation.NewInput(keyvals)
-                       .KeyValueLookup(computation.NewInput(queries))
-                       .Subscribe(list => { foreach (var l in list) Console.WriteLine("value[\"{0}\"]:\t\"{1}\"", l.First, l.Second); });
+                // note the structure
+                //computation.NewInput(keyvals)
+                //       .KeyValueLookup(computation.NewInput(queries))
+                //       .Subscribe(list => { foreach (var l in list) Console.WriteLine("value[\"{0}\"]:\t\"{1}\"", l.First, l.Second); });
+
+                // declare the inputs
+                var insertStreamInput = computation.NewInput(keyvals);
+                var queryStreamInput = computation.NewInput(queries);
+
+                // the calculation and output
+                var streamOutput = insertStreamInput.KeyValueLookup(queryStreamInput);
+
+                // subscribe to completion of the epoch
+                streamOutput.Subscribe(list => { foreach (var l in list) Console.WriteLine("value[\"{0}\"]:\t\"{1}\"", l.First, l.Second); });
 
                 computation.Activate();
 
@@ -114,9 +127,11 @@ namespace Microsoft.Research.Naiad.Examples.KeyValueLookup
                     }
                 }
 
+                // close the inputs
                 keyvals.OnCompleted();
                 queries.OnCompleted();
 
+                // wait (block) for outstanding computations to complete
                 computation.Join();
             }
 

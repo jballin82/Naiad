@@ -16,3 +16,4 @@ ehthumbs.db
 Desktop.ini
 *.nupkg
 packages/
+.vs/Naiad/xs/project-cache/**

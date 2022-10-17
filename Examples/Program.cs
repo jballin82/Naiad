@@ -58,10 +58,14 @@ namespace Microsoft.Research.Naiad.Examples
             // map from example names to code to run in each case
             var examples = new Dictionary<string, Example>();
 
+            examples.Add("experiment", new Experiment.Experiment());
+
             // loading up several examples
             examples.Add("wordcount", new WordCount.WordCount());
             examples.Add("lookup", new KeyValueLookup.KeyValueLookup());
             examples.Add("connectedcomponents", new ConnectedComponents.ConnectedComponents());
+            examples.Add("latency", new Latency.Latency());
+            examples.Add("throughput", new Throughput.Throughput());
 
             // two examples capable of stressing Naiad's performance
             examples.Add("benchmark-throughput", new Throughput.Throughput());
@@ -99,7 +103,7 @@ namespace Microsoft.Research.Naiad.Examples
                 }
                 else
                 {
-                    Logging.LogLevel = LoggingLevel.Error;
+                    Logging.LogLevel = LoggingLevel.Info;
                     Logging.LogStyle = LoggingStyle.Console;
 
                     examples[example].Execute(args);

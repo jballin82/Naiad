@@ -1,0 +1,55 @@
+﻿<Properties StartupConfiguration="{09C7F091-4D55-4DFB-95DA-D985CB401668}|Default">
+  <MonoDevelop.Ide.Workbench ActiveDocument="Experiment/Program.cs">
+    <Files>
+      <File FileName="Examples/Naiad/WordCount.cs" Line="128" Column="66" />
+      <File FileName="Naiad/CodeGeneration/AutoSerialization.cs" Line="1242" Column="19" />
+      <File FileName="Naiad.sln" Line="1" Column="1" />
+      <File FileName="Naiad/App.config" Line="1" Column="1" />
+      <File FileName="Naiad/Configuration.cs" Line="1" Column="1" />
+      <File FileName="Naiad/CodeGeneration/ExpressionComparer.cs" Line="1" Column="1" />
+      <File FileName="Naiad/Runtime/Controlling/Controller.cs" Line="186" Column="25" />
+      <File FileName="Naiad/Runtime/Controlling/Peloponnese.cs" Line="1" Column="1" />
+      <File FileName="Naiad/Dataflow/DataSources.cs" Line="455" Column="18" />
+      <File FileName="Examples/Naiad/ConnectedComponents.cs" Line="60" Column="10" />
+      <File FileName="Examples/DifferentialDataflow/ConnectedComponents.cs" Line="1" Column="1" />
+      <File FileName="Examples/DifferentialDataflow/WordCount.cs" Line="1" Column="1" />
+      <File FileName="Examples/GraphLINQ/PageRank.cs" Line="1" Column="1" />
+      <File FileName="Examples/Naiad/Latency.cs" Line="1" Column="1" />
+      <File FileName="Experiment/Program.cs" Line="1" Column="1" />
+    </Files>
+    <Pads>
+      <Pad Id="ProjectPad">
+        <State name="__root__">
+          <Node name="Naiad" expanded="True">
+            <Node name="AzureExamples" expanded="True">
+              <Node name="Azure" expanded="True" />
+            </Node>
+            <Node name="Examples" expanded="True">
+              <Node name="DifferentialDataflow" expanded="True" />
+              <Node name="GraphLINQ" expanded="True" />
+              <Node name="Naiad" expanded="True" />
+            </Node>
+            <Node name="Experiment" expanded="True" />
+            <Node name="Naiad" expanded="True">
+              <Node name="CodeGeneration" expanded="True" />
+              <Node name="Dataflow" expanded="True" />
+              <Node name="Runtime" expanded="True">
+                <Node name="Controlling" expanded="True" />
+              </Node>
+            </Node>
+          </Node>
+        </State>
+      </Pad>
+      <Pad Id="MonoDevelop.Debugger.WatchPad">
+        <State />
+      </Pad>
+    </Pads>
+  </MonoDevelop.Ide.Workbench>
+  <MultiItemStartupConfigurations />
+  <MonoDevelop.Ide.DebuggingService.PinnedWatches />
+  <MonoDevelop.Ide.Workspace ActiveConfiguration="Debug" />
+  <MonoDevelop.Ide.ItemProperties.Examples PreferredExecutionTarget="MonoDevelop.Default" />
+  <MonoDevelop.Ide.DebuggingService.Breakpoints>
+    <BreakpointStore />
+  </MonoDevelop.Ide.DebuggingService.Breakpoints>
+</Properties>
