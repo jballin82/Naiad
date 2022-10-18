@@ -38,7 +38,7 @@ namespace Microsoft.Research.Naiad.Examples.ConnectedComponents
     public static class ExtensionMethods
     {
         // takes a graph as an edge stream and produces a stream of pairs (x,y) where y is the least vertex capable of reaching vertex x.
-        public static Stream<Pair<TVertex, TVertex>, Epoch> DirectedReachability<TVertex>(this Stream<Pair<TVertex, TVertex>, Epoch> edges) 
+        public static Stream<Pair<TVertex, TVertex>, Epoch> DirectedReachability<TVertex>(this Stream<Pair<TVertex, TVertex>, Epoch> edges)
             where TVertex : IEquatable<TVertex>, IComparable<TVertex>
         {
             // prepartitioning reduces exchanges by one.
@@ -124,6 +124,8 @@ namespace Microsoft.Research.Naiad.Examples.ConnectedComponents
                 this.Aggregate = aggregate;
 
                 this.Entrancy = 5;
+                Console.WriteLine("Constructing StreamingAggregate");
+
             }
         }
 
@@ -203,6 +205,8 @@ namespace Microsoft.Research.Naiad.Examples.ConnectedComponents
                 : base(index, vertex)
             {
                 this.Aggregate = aggregate;
+                Console.WriteLine("Constructing BlockingAggregate");
+
             }
         }
 
@@ -210,7 +214,7 @@ namespace Microsoft.Research.Naiad.Examples.ConnectedComponents
 
         #region Graph-based Join
 
-        public static Stream<Pair<TVertex, TState>, TTime> GraphJoin<TVertex, TState, TTime>(this Stream<Pair<TVertex, TState>, TTime> values, Stream<Pair<TVertex, TVertex>, TTime> edges) 
+        public static Stream<Pair<TVertex, TState>, TTime> GraphJoin<TVertex, TState, TTime>(this Stream<Pair<TVertex, TState>, TTime> values, Stream<Pair<TVertex, TVertex>, TTime> edges)
             where TTime : Time<TTime>
         {
             return Foundry.NewBinaryStage(edges, values, (i, s) => new GraphJoinVertex<TVertex, TState, TTime>(i, s), x => x.First.GetHashCode(), y => y.First.GetHashCode(), null, "GraphJoin");
@@ -288,6 +292,12 @@ namespace Microsoft.Research.Naiad.Examples.ConnectedComponents
         #endregion
     }
 
+    /*
+     * Right, what this does is generate random nodes labelled with integers and a random set of edges between the nodes.
+     * We may create several disconnected graphs or just one
+     * It finds the largest labelled node in each graph
+     * 
+     */
     public class ConnectedComponents : Example
     {
         public string Usage
@@ -300,8 +310,8 @@ namespace Microsoft.Research.Naiad.Examples.ConnectedComponents
             // allocate a new computation from command line arguments.
             using (var computation = NewComputation.FromArgs(ref args))
             {
-                var nodeCount = args.Length == 3 ? Convert.ToInt32(args[1]) : 1000;
-                var edgeCount = args.Length == 3 ? Convert.ToInt32(args[2]) : 2000;
+                var nodeCount = args.Length == 3 ? Convert.ToInt32(args[1]) : 200; //originally 1000
+                var edgeCount = args.Length == 3 ? Convert.ToInt32(args[2]) : 100; // 2000
 
                 #region Generate a local fraction of input data
 
@@ -318,8 +328,11 @@ namespace Microsoft.Research.Naiad.Examples.ConnectedComponents
                         graphFragmentList.Add(edge);
                     }
                 }
-                    
+
                 var graphFragment = graphFragmentList.ToArray();
+                //Console.WriteLine("Connections generated (graph will be symmetrized):");
+                //foreach (var fragment in graphFragment)
+                //    Console.WriteLine("\t{0} <-> {1}", fragment.First, fragment.Second);
 
                 #endregion
 
@@ -336,8 +349,17 @@ namespace Microsoft.Research.Naiad.Examples.ConnectedComponents
                              .Concat(edges);
 
                 edges.DirectedReachability()
-                     .Subscribe(list => Console.WriteLine("labeled {0} nodes in {1}", list.Count(), stopwatch.Elapsed));
-
+                     .Subscribe(list =>
+                     {
+                         Console.WriteLine("labeled {0} nodes in {1}", list.Count(), stopwatch.Elapsed);
+                         //Console.WriteLine("The minimally connected graphs are:");
+                         //var grouped = list.GroupBy(l => l.Second);
+                         //foreach(var g in grouped)
+                         //{
+                         //    var x = g.Select(b => b.First).OrderBy(n => n).Reverse();
+                         //    Console.WriteLine("\t{0}\t: {1}", g.Key, string.Join(", ", x));
+                         //}
+                     });
                 stopwatch.Start();
                 computation.Activate();     // start graph computation
                 computation.Join();         // block until computation completes

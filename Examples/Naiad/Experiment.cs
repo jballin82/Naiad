@@ -60,44 +60,6 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
     }
 
 
-    //input - a string
-    //output - a transitioned nudge
-    //internal class NudgerVertex : UnaryVertex<string, Nudger, Epoch>
-    //{
-    //    private readonly Dictionary<string, Nudger> Nudgers = new Dictionary<string, Nudger>();
-    //    private readonly HashSet<string> Changed = new HashSet<string>();
-
-    //    public override void OnReceive(Message<string, Epoch> message)
-    //    {
-    //        Console.WriteLine("NudgerVertex: OnReceive");
-    //        this.NotifyAt(message.time);
-
-    //        for (int i = 0; i < message.length; i++)
-    //        {
-    //            var data = message.payload[i];
-    //            if (!this.Nudgers.ContainsKey(data))
-    //                this.Nudgers[data] = new Nudger(message.time, data);
-    //            else
-    //                this.Nudgers[data].Nudge(message.time);
-
-    //            this.Changed.Add(data);
-    //        }
-    //    }
-
-    //    public override void OnNotify(Epoch time)
-    //    {
-    //        var output = this.Output.GetBufferForTime(time);
-    //        foreach (var record in this.Changed)
-    //            output.Send(Nudgers[record]);
-
-    //        this.Changed.Clear();
-    //        Console.WriteLine("NudgerVertex: Received OnNotify for Epoch: " + this.ToString());
-    //    }
-
-    //    public NudgerVertex(int index, Stage<Epoch> stage) : base(index, stage) { }
-
-    //}
-
     internal class NudgerVertex : UnaryVertex<string, NudgerUpdate, Epoch>
     {
         private readonly Dictionary<string, Nudger> Nudgers = new Dictionary<string, Nudger>();
@@ -149,7 +111,7 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
         }
     }
 
-    internal class HyperVertex : BinaryVertex<NudgerUpdate, Epoch, IReadOnlyDictionary<string, State>, Epoch>
+    internal class HyperVertex : BinaryVertex<NudgerUpdate, Epoch, Pair<Epoch, IReadOnlyDictionary<string, State>>, Epoch>
     {
         private SortedDictionary<Epoch, IReadOnlyDictionary<string, State>> Indices;
 
@@ -162,6 +124,12 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
 
         public IReadOnlyDictionary<string, State> EntriesAt(Epoch epoch)
         {
+            Console.WriteLine("HyperVertex {0} state: ", this.VertexId);
+            foreach (var item in Indices)
+            {
+                Console.WriteLine("{0}: {1}: {2}", this.VertexId, item.Key,
+                    string.Join(",", item.Value.Select(kv => "[" + kv.Key + ": " + kv.Value + "]")));
+            }
             if (!HasStateAt(epoch)) return new Dictionary<string, State>();
 
             var last = Indices.ToList().FindLast(pair => pair.Key.LessThan(epoch));
@@ -176,33 +144,38 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
 
         public override void OnReceive1(Message<NudgerUpdate, Epoch> message)
         {
-            Console.WriteLine("HyperVertex: OnReceive1");
+            Console.WriteLine("HyperVertex {0}: OnReceive1 (nudger updates)", this.VertexId);
             this.NotifyAt(message.time);
 
             if (!InFlightUpdates.ContainsKey(message.time))
                 InFlightUpdates[message.time] = new List<NudgerUpdate>();
 
 
+            for (int i = 0; i < message.length; i++)
+            {
+                Console.WriteLine("HyperVertex {0}: {1}: {2}", this.VertexId, i, message.payload[i]);
+            }
             InFlightUpdates[message.time].AddRange(message.payload.Take(message.length));
         }
 
         public override void OnReceive2(Message<Epoch, Epoch> message)
         {
-            Console.WriteLine("HyperVertex: OnReceive2");
+            Console.WriteLine("HyperVertex {0}: OnReceive2 (query)", this.VertexId);
             this.NotifyAt(message.time);
             var output = this.Output.GetBufferForTime(message.time);
+
             for (int i = 0; i < message.length; i++)
             {
-                Console.WriteLine("HyperIndex: obtaining for i = " + i + ", payload = " + message.payload[i]);
-                output.Send(this.EntriesAt(message.payload[i]));
+                var queryTime = message.payload[i];
+                Console.WriteLine("HyperVertex {0}: reading state for epoch: {1}", this.VertexId, queryTime );
+                output.Send(new Pair<Epoch, IReadOnlyDictionary<string, State>>(queryTime, this.EntriesAt(queryTime)));
             }
-
 
         }
 
         public override void OnNotify(Epoch time)
         {
-            Console.WriteLine("HyperVertex: Received OnNotify for Epoch: " + time.ToString());
+            Console.WriteLine("HyperVertex {0}: Received OnNotify for Epoch: {1}", this.VertexId, time);
             var newPairs = new Dictionary<string, State>();
             if (Indices.Count > 0)
             {
@@ -210,7 +183,7 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
                 if (!latestSolid.Key.LessThan(time))
                 {
                     //erm, that shouldn't happen
-                    Console.WriteLine("HyperIndex: times appear out of order: OnNotify: "
+                    Console.WriteLine("HyperVertex: times appear out of order: OnNotify: "
                         + time.ToString() + ", latest solid: " + latestSolid.Key.ToString());
                 }
                 // "clone" the latest entry
@@ -220,11 +193,11 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
             {
                 // merge updates
                 var changes = InFlightUpdates[time];
-                Console.WriteLine("HyperVertex: changes:");
+                Console.WriteLine("HyperVertex {0}: changes:", this.VertexId);
 
                 foreach (var change in changes)
                 {
-                    Console.WriteLine("\t" + change);
+                    Console.WriteLine("\t+HyperVertex {0}: {1}", this.VertexId, change);
                     newPairs[change.NudgerName] = change.NewState;
                 }
                 // add to soldified state
@@ -232,7 +205,7 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
 
                 InFlightUpdates.Remove(time);
             }
-            Console.WriteLine("HyperVertex: Finished OnNotify for Epoch: " + time.ToString());
+            Console.WriteLine("HyperVertex {0}: Finished OnNotify for Epoch: {1}", this.VertexId, time);
         }
     }
 
@@ -248,57 +221,105 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
             using (var computation = NewComputation.FromArgs(ref args))
             {
                 // let our "processes" be known by strings
-                var instructions = new BatchedDataSource<string>();
                 // and our queries be made by timestamps of ints
+                var instructions = new BatchedDataSource<string>();
                 var queries = new BatchedDataSource<Epoch>();
 
+                /*
+                 * instructions >
+                 *  instrStreamInput > s1 (Nudgers)---\
+                 *                                     \
+                 *                                       s2 (Hypers) ----> query results
+                 *                                     /
+                 *  queryStreamInput > ---------------/
+                 * queries >
+                 * 
+                 */
 
                 var instrStreamInput = computation.NewInput(instructions);
                 var queryStreamInput = computation.NewInput(queries);
-                var s1 = instrStreamInput.NewUnaryStage((i, s) => new NudgerVertex(i, s), x => x.GetHashCode(), null, "Nudgers");
 
-                var s2 = Foundry.NewBinaryStage(s1, queryStreamInput, (i, s) => new HyperVertex(i, s),
-                    x => x.GetHashCode(), y => y.GetHashCode(), z => z.GetHashCode(), "Hypers");
+                //Apparently stable partition function
+                //input: nudger name's hash code
+                //output: *nudgerupdate* name's hash code
+                var s1 = Foundry.NewUnaryStage(instrStreamInput,
+                    (i, s) => new NudgerVertex(i, s), x => x.GetHashCode(), x => x.NudgerName.GetHashCode(), "Nudgers");
 
+                // partition all by 0 => everything comes together
+                // In the KeyValueLookup example, the two partition functions are the same: Updating the value associated with a key and querying the value associated with a key get sent to the same vertex
+                // but here, Naiad is going to direct the query to just one vertex, which we don't want (if we have multiple vertices)
+                // Reasoning that setting the partition function to zero on both streams of input implies a singleton
+                var s2 = Foundry.NewBinaryStage(s1, queryStreamInput,
+                    (i, s) => new HyperVertex(i, s),
+                    x => 0, y => 0, z => 0, "Hypers");
+
+                //subscribe to the output of the Hyper vertex
                 s2.Subscribe(list =>
                 {
+                    Console.WriteLine("Receiving hyper outputs:");
+                    Console.WriteLine("| Epoch\t| Nudger\t| State\t|");
                     foreach (var element in list)
                     {
-                        foreach(var kv in element)
-                            Console.WriteLine(kv.Key + " : " + kv.Value);
+                        foreach (var kv in element.Second)
+                            Console.WriteLine("| {0}\t| {1}\t| {2}\t|", element.First, kv.Key, kv.Value);
                     }
                 });
+
                 computation.Activate();
+
+                var frontier = 0;
+                computation.OnFrontierChange += (c, f) =>
+                {
+                    var frontiers = f.NewFrontier.Select(k => new Epoch().InitializeFrom(k, 1).epoch).ToList();
+                    frontiers.Add(0);
+                    frontier = frontiers.Max();
+                    Console.WriteLine("New frontier: {0}, Max: {1}", string.Join(", ", f.NewFrontier), frontier);
+
+                };
+
 
                 if (computation.Configuration.ProcessID == 0)
                 {
                     // with our dataflow graph defined, we can start soliciting strings from the user.
-                    Console.WriteLine("Start entering names of Nudgers that are getting transitioned");
-                    Console.WriteLine("Naiad will display the status of changed Nudgers");
+                    Console.WriteLine("Enter string names for nudgers to nudge");
+                    Console.WriteLine("Enter an int to query an epoch; enter '?' to query the current frontier's epoch");
 
                     // read lines of input and hand them to the input, until an empty line appears.
                     for (var line = Console.ReadLine(); line.Length > 0; line = Console.ReadLine())
                     {
                         var split = line.Trim().Split();
+
+
                         if (split.Length == 1)
                         {
-                            int i = 0;
-                            if (int.TryParse(split[0], out i))
+                            if (split[0] == "?")
                             {
-                                queries.OnNext(new Epoch(i));
+                                queries.OnNext(new Epoch(frontier));
                                 instructions.OnNext();
                             }
                             else
                             {
-                                instructions.OnNext(split);
-                                queries.OnNext();
+                                int i = 0;
+                                if (int.TryParse(split[0], out i))
+                                {
+                                    queries.OnNext(new Epoch(i));
+                                    instructions.OnNext();
+                                }
+                                else
+                                {
+                                    instructions.OnNext(split);
+                                    queries.OnNext();
+                                }
                             }
+
+
                         }
                         else
                         {
                             instructions.OnNext(split);
                             queries.OnNext();
                         }
+
                     }
 
 
@@ -306,7 +327,9 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
 
                 instructions.OnCompleted();   // signal the end of the input.
                 queries.OnCompleted();
+
                 computation.Join();           // waits until the graph has finished executing.
+
             }
         }
     }

@@ -87,7 +87,7 @@ namespace Microsoft.Research.Naiad.Examples.KeyValueLookup
                 // note the structure
                 //computation.NewInput(keyvals)
                 //       .KeyValueLookup(computation.NewInput(queries))
-                //       .Subscribe(list => { foreach (var l in list) Console.WriteLine("value[\"{0}\"]:\t\"{1}\"", l.First, l.Second); });
+                //       .Subscribe(list => { foreach (var l in list) Console.WriteLine("valAue[\"{0}\"]:\t\"{1}\"", l.First, l.Second); });
 
                 // declare the inputs
                 var insertStreamInput = computation.NewInput(keyvals);

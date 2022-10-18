@@ -85,6 +85,8 @@ namespace Microsoft.Research.Naiad.Examples.WordCount
 
                 // reset observed records
                 this.Changed.Clear();
+                Console.WriteLine("Vertex {0} with state: {1}", this.VertexId,
+                    string.Join(", ", Counts.Select(wc => string.Format("[{0}: {1}]", wc.Key, wc.Value))));
                 Console.WriteLine("Received OnNotify for Epoch: " + time.ToString());
             }
 
