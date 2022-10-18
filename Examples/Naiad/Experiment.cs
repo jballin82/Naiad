@@ -5,6 +5,7 @@ using Microsoft.Research.Naiad.Input;
 using Microsoft.Research.Naiad.Dataflow.StandardVertices;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.Remoting.Messaging;
 
 namespace Microsoft.Research.Naiad.Examples.Experiment
 {
@@ -145,27 +146,39 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
     }
 
 
+    internal static class AppState
 
-    internal class HyperVertex : BinaryVertex<NudgerUpdate, Epoch, Pair<Epoch, IReadOnlyDictionary<string, State>>, Epoch>
+    {
+        public static List<HyperVertex> _hypers = new List<HyperVertex>();
+    }
+
+    internal class HyperVertex : UnaryVertex<NudgerUpdate, Epoch, Epoch>
     {
         private SortedDictionary<Epoch, IReadOnlyDictionary<string, State>> Indices;
+        internal Epoch LatestEpoch { get; private set; }
 
         private Dictionary<Epoch, List<NudgerUpdate>> InFlightUpdates;
 
         public bool HasStateAt(Epoch epoch)
         {
+            if (this.Indices.Count == 0)
+            {
+                //Console.WriteLine("No indices yet!");
+                return false;
+            }
             return this.Indices.First().Key.LessThan(epoch);
         }
 
         public IReadOnlyDictionary<string, State> EntriesAt(Epoch epoch)
         {
-            Console.WriteLine("HyperVertex {0} state: ", this.VertexId);
-            foreach (var item in Indices)
-            {
-                Console.WriteLine("{0}: {1}: {2}", this.VertexId, item.Key,
-                    string.Join(",", item.Value.Select(kv => "[" + kv.Key + ": " + kv.Value + "]")));
-            }
-            if (!HasStateAt(epoch)) return new Dictionary<string, State>();
+            //Console.WriteLine("HyperVertex {0} state: ", this.VertexId);
+            //foreach (var item in Indices)
+            //{
+            //    Console.WriteLine("{0}: {1}: {2}", this.VertexId, item.Key,
+            //        string.Join(",", item.Value.Select(kv => "[" + kv.Key + ": " + kv.Value + "]")));
+            //}
+            if (!HasStateAt(epoch))
+                return new Dictionary<string, State>();
 
             var last = Indices.ToList().FindLast(pair => pair.Key.LessThan(epoch));
             return last.Value;
@@ -175,9 +188,10 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
         {
             Indices = new SortedDictionary<Epoch, IReadOnlyDictionary<string, State>>();
             InFlightUpdates = new Dictionary<Epoch, List<NudgerUpdate>>();
+            AppState._hypers.Add(this);
         }
 
-        public override void OnReceive1(Message<NudgerUpdate, Epoch> message)
+        public override void OnReceive(Message<NudgerUpdate, Epoch> message)
         {
             Console.WriteLine("HyperVertex {0}: OnReceive1 (nudger updates)", this.VertexId);
             this.NotifyAt(message.time);
@@ -191,21 +205,6 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
                 Console.WriteLine("HyperVertex {0}: {1}: {2}", this.VertexId, i, message.payload[i]);
             }
             InFlightUpdates[message.time].AddRange(message.payload.Take(message.length));
-        }
-
-        public override void OnReceive2(Message<Epoch, Epoch> message)
-        {
-            Console.WriteLine("HyperVertex {0}: OnReceive2 (query)", this.VertexId);
-            this.NotifyAt(message.time);
-            var output = this.Output.GetBufferForTime(message.time);
-
-            for (int i = 0; i < message.length; i++)
-            {
-                var queryTime = message.payload[i];
-                Console.WriteLine("HyperVertex {0}: reading state for epoch: {1}", this.VertexId, queryTime);
-                output.Send(new Pair<Epoch, IReadOnlyDictionary<string, State>>(queryTime, this.EntriesAt(queryTime)));
-            }
-
         }
 
         public override void OnNotify(Epoch time)
@@ -228,7 +227,7 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
             {
                 // merge updates
                 var changes = InFlightUpdates[time];
-                Console.WriteLine("HyperVertex {0}: changes:", this.VertexId);
+                Console.WriteLine("HyperVertex {0}: committing changes:", this.VertexId);
 
                 foreach (var change in changes)
                 {
@@ -240,7 +239,12 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
 
                 InFlightUpdates.Remove(time);
             }
+
+            var output = this.Output.GetBufferForTime(time);
+            output.Send(time);
+            LatestEpoch = time;
             Console.WriteLine("HyperVertex {0}: Finished OnNotify for Epoch: {1}", this.VertexId, time);
+
         }
     }
 
@@ -251,6 +255,19 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
 
         public string Help => "Does some stuff";
 
+        private void PrintQuery(int i)
+        {
+
+            Console.WriteLine("State for Epoch: {0}", i);
+            var r = AppState._hypers.SelectMany(h => h.EntriesAt(new Epoch(i))).ToArray();
+
+            Console.WriteLine("Name\t| State");
+
+            foreach (var elem in r)
+                Console.WriteLine("{0}\t| {1}", elem.Key, elem.Value);
+            Console.WriteLine("({0} records)", r.Length);
+        }
+
         public void Execute(string[] args)
         {
             using (var computation = NewComputation.FromArgs(ref args))
@@ -258,57 +275,59 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
                 // let our "processes" be known by strings
                 // and our queries be made by timestamps of ints
                 var instructions = new BatchedDataSource<string>();
-                var queries = new BatchedDataSource<Epoch>();
+
 
                 /*
                  * instructions >
-                 *  instrStreamInput > s1 (Nudgers)-----\
-                 *                                       \
-                 *                                        s2 (Hypers) ----> query results
-                 *                                       /
-                 *  queryStreamInput > -----------------/
-                 * queries >
-                 * 
+                 *  instrStreamInput > s1 (Nudgers)----- s2 (Hypers) ----> completed Epoch
+                 *                                        
                  */
 
                 var instrStreamInput = computation.NewInput(instructions);
-                var queryStreamInput = computation.NewInput(queries);
 
                 // Apparently stable partition function:
                 // input: nudger name's hash code
-                // output: *nudgerupdate* name's hash code
+                // output: *nudgerupdate*'s colour
                 var s1 = Foundry.NewUnaryStage(instrStreamInput,
                     (i, s) => new NudgerVertex(i, s), x => x.GetHashCode(), x => x.NudgerColour.GetHashCode(), "Nudgers");
 
                 // partition all by 0 => everything comes together
-                // In the KeyValueLookup example, the two partition functions are the same: Updating the value associated with a key and querying the value associated with a key get sent to the same vertex
+                // (prior BinaryVertex code) In the KeyValueLookup example, the two partition functions are the same: Updating the value associated
+                // with a key and querying the value associated with a key get sent to the same vertex
                 // but here, Naiad is going to direct the query to just one vertex, which we don't want (if we have multiple vertices)
                 // Reasoning that setting the partition function to zero on *both* streams of input implies a singleton
-                var s2 = Foundry.NewBinaryStage(s1, queryStreamInput,
-                    (i, s) => new HyperVertex(i, s),
-                    x => 0, y => 0, z => 0, "Hypers");
 
-                // subscribe to the output of the Hyper vertex
-                s2.Subscribe(list =>
-                {
-                    Console.WriteLine("Receiving hyper outputs:");
-                    Console.WriteLine("| Epoch\t| Nudger\t| State\t\t|");
-                    foreach (var element in list)
-                    {
-                        foreach (var kv in element.Second)
-                            Console.WriteLine("| {0}\t| {1}\t\t| {2}\t|", element.First, kv.Key, kv.Value);
-                    }
-                });
+                // Partition input based on NudgerColour, output has no partitioning
+                var s2 = Foundry.NewUnaryStage(s1,
+                    (i, s) => new HyperVertex(i, s), x => x.NudgerColour.GetHashCode(), y => 0, "Hypers");
+
+                // the last unary stage emits the latest epoch that has worked its way through; this is the trailing frontier
+                var trailingFrontier = -1;
+                s2.Subscribe(completions =>
+                        {
+                            trailingFrontier = completions.Select(i => i.epoch).Max();
+                            Console.WriteLine("*** Epoch {0} complete", trailingFrontier);
+                        }
+                    );
 
                 computation.Activate();
 
-                var frontier = 0;
+                // AFAICT the frontier is the newest (highest) epoch of all pointstamps in the system
+                // (It isn't the lowest complete epoch - that's the trailing frontier above which it output by the computation)
+                // although I'm surprised it's not immediately available - it's not the shadowFrontier defined thus:
+                var shadowFrontier = 0;
+                var leadingFrontier = 0;
                 computation.OnFrontierChange += (c, f) =>
                 {
-                    var frontiers = f.NewFrontier.Select(k => new Epoch().InitializeFrom(k, 1).epoch).ToList();
-                    frontiers.Add(0);
-                    frontier = frontiers.Max();
-                    Console.WriteLine("New frontier: {0}, Max: {1}", string.Join(", ", f.NewFrontier), frontier);
+
+                    var frontiers = f.NewFrontier.Select(k => new Epoch().InitializeFrom(k, 1).epoch).ToArray();
+                    if (frontiers.Length > 0)
+
+                    {
+                        shadowFrontier = frontiers.Min();
+                        leadingFrontier = frontiers.Max();
+                    }
+                    Console.WriteLine("Frontier update: {0}, Min: {1}, Max: {2}", string.Join(", ", f.NewFrontier), shadowFrontier, leadingFrontier);
 
                 };
 
@@ -316,52 +335,41 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
                 if (computation.Configuration.ProcessID == 0)
                 {
                     // with our dataflow graph defined, we can start soliciting strings from the user.
-                    Console.WriteLine("Enter string names for nudgers to nudge");
-                    Console.WriteLine("Enter an int to query an epoch; enter '?' to query the current frontier's epoch");
+                    Console.WriteLine("Enter names for nudgers to nudge");
+                    Console.WriteLine("Enter '?' to query the current trailing frontier's epoch; ?n to query the n'th historical epoch");
 
                     // read lines of input and hand them to the input, until an empty line appears.
+
                     for (var line = Console.ReadLine(); line.Length > 0; line = Console.ReadLine())
                     {
+
+
+                        Console.WriteLine("*** Trailing frontier is: {0}", trailingFrontier);
+
                         var split = line.Trim().Split();
 
-
-                        if (split.Length == 1)
+                        if (split[0].StartsWith("?"))
                         {
                             if (split[0] == "?")
-                            {
-                                queries.OnNext(new Epoch(frontier));
-                                instructions.OnNext();
-                            }
+                                PrintQuery(trailingFrontier);
                             else
                             {
+                                var rest = split[0].Substring(1);
                                 int i = 0;
-                                if (int.TryParse(split[0], out i))
-                                {
-                                    queries.OnNext(new Epoch(i));
-                                    instructions.OnNext();
-                                }
+                                if (int.TryParse(rest, out i))
+                                    PrintQuery(i);
                                 else
-                                {
-                                    instructions.OnNext(split);
-                                    queries.OnNext();
-                                }
+                                    Console.WriteLine("Failed to parse input; try again");
                             }
-
-
                         }
                         else
                         {
                             instructions.OnNext(split);
-                            queries.OnNext();
                         }
-
                     }
-
-
                 }
 
                 instructions.OnCompleted();   // signal the end of the input.
-                queries.OnCompleted();
 
                 computation.Join();           // waits until the graph has finished executing.
 
