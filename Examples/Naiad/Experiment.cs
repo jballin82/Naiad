@@ -8,6 +8,7 @@ using System.Linq;
 
 namespace Microsoft.Research.Naiad.Examples.Experiment
 {
+    #region Objects
     public enum State
     {
         ESTIMATED,
@@ -17,9 +18,19 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
         DONE
     };
 
+    public enum Colour
+    {
+        RED,
+        GREEN,
+        BLUE,
+        YELLOW
+    };
+
     public class Nudger
     {
         public readonly string Name;
+
+        public readonly Colour Colour;
 
         private List<Pair<Epoch, State>> Transitions;
 
@@ -28,6 +39,22 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
         public Nudger(Epoch epoch, string Name)
         {
             this.Name = Name;
+            switch (Name.GetHashCode() % 4)
+            {
+                case 0:
+                    Colour = Colour.RED;
+                    break;
+                case 1:
+                    Colour = Colour.BLUE;
+                    break;
+                case 2:
+                    Colour = Colour.GREEN;
+                    break;
+                default:
+                    Colour = Colour.YELLOW;
+                    break;
+
+            };
             Transitions = new List<Pair<Epoch, State>>();
             Transitions.Add(new Pair<Epoch, State>(epoch, State.ESTIMATED));
         }
@@ -59,6 +86,24 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
         }
     }
 
+    internal struct NudgerUpdate
+    {
+        public readonly string NudgerName;
+        public readonly Colour NudgerColour;
+        public readonly State NewState;
+        public NudgerUpdate(string name, Colour colour, State state)
+        {
+            NudgerName = name;
+            NudgerColour = colour;
+            NewState = state;
+        }
+        public override string ToString()
+        {
+            return String.Format("NudgerUpdate[{0}, {1}, {2}]", NudgerName, NudgerColour, NewState);
+        }
+    }
+    #endregion
+
 
     internal class NudgerVertex : UnaryVertex<string, NudgerUpdate, Epoch>
     {
@@ -72,13 +117,16 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
             for (int i = 0; i < message.length; i++)
             {
                 var data = message.payload[i];
+
+
                 var state = State.ESTIMATED;
                 if (!this.Nudgers.ContainsKey(data))
                     this.Nudgers[data] = new Nudger(message.time, data);
                 else
                     state = this.Nudgers[data].Nudge(message.time);
 
-                var update = new NudgerUpdate(data, state);
+                var colour = this.Nudgers[data].Colour;
+                var update = new NudgerUpdate(data, colour, state);
 
                 var output = this.Output.GetBufferForTime(message.time);
                 Console.WriteLine("Sending update: " + update + ", i = " + i);
@@ -96,20 +144,7 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
 
     }
 
-    internal struct NudgerUpdate
-    {
-        public readonly string NudgerName;
-        public readonly State NewState;
-        public NudgerUpdate(string name, State State)
-        {
-            NudgerName = name;
-            NewState = State;
-        }
-        public override string ToString()
-        {
-            return "NudgerUpdate[" + NudgerName + ", " + NewState + "]";
-        }
-    }
+
 
     internal class HyperVertex : BinaryVertex<NudgerUpdate, Epoch, Pair<Epoch, IReadOnlyDictionary<string, State>>, Epoch>
     {
@@ -167,7 +202,7 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
             for (int i = 0; i < message.length; i++)
             {
                 var queryTime = message.payload[i];
-                Console.WriteLine("HyperVertex {0}: reading state for epoch: {1}", this.VertexId, queryTime );
+                Console.WriteLine("HyperVertex {0}: reading state for epoch: {1}", this.VertexId, queryTime);
                 output.Send(new Pair<Epoch, IReadOnlyDictionary<string, State>>(queryTime, this.EntriesAt(queryTime)));
             }
 
@@ -227,11 +262,11 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
 
                 /*
                  * instructions >
-                 *  instrStreamInput > s1 (Nudgers)---\
-                 *                                     \
-                 *                                       s2 (Hypers) ----> query results
-                 *                                     /
-                 *  queryStreamInput > ---------------/
+                 *  instrStreamInput > s1 (Nudgers)-----\
+                 *                                       \
+                 *                                        s2 (Hypers) ----> query results
+                 *                                       /
+                 *  queryStreamInput > -----------------/
                  * queries >
                  * 
                  */
@@ -239,29 +274,29 @@ namespace Microsoft.Research.Naiad.Examples.Experiment
                 var instrStreamInput = computation.NewInput(instructions);
                 var queryStreamInput = computation.NewInput(queries);
 
-                //Apparently stable partition function
-                //input: nudger name's hash code
-                //output: *nudgerupdate* name's hash code
+                // Apparently stable partition function:
+                // input: nudger name's hash code
+                // output: *nudgerupdate* name's hash code
                 var s1 = Foundry.NewUnaryStage(instrStreamInput,
-                    (i, s) => new NudgerVertex(i, s), x => x.GetHashCode(), x => x.NudgerName.GetHashCode(), "Nudgers");
+                    (i, s) => new NudgerVertex(i, s), x => x.GetHashCode(), x => x.NudgerColour.GetHashCode(), "Nudgers");
 
                 // partition all by 0 => everything comes together
                 // In the KeyValueLookup example, the two partition functions are the same: Updating the value associated with a key and querying the value associated with a key get sent to the same vertex
                 // but here, Naiad is going to direct the query to just one vertex, which we don't want (if we have multiple vertices)
-                // Reasoning that setting the partition function to zero on both streams of input implies a singleton
+                // Reasoning that setting the partition function to zero on *both* streams of input implies a singleton
                 var s2 = Foundry.NewBinaryStage(s1, queryStreamInput,
                     (i, s) => new HyperVertex(i, s),
                     x => 0, y => 0, z => 0, "Hypers");
 
-                //subscribe to the output of the Hyper vertex
+                // subscribe to the output of the Hyper vertex
                 s2.Subscribe(list =>
                 {
                     Console.WriteLine("Receiving hyper outputs:");
-                    Console.WriteLine("| Epoch\t| Nudger\t| State\t|");
+                    Console.WriteLine("| Epoch\t| Nudger\t| State\t\t|");
                     foreach (var element in list)
                     {
                         foreach (var kv in element.Second)
-                            Console.WriteLine("| {0}\t| {1}\t| {2}\t|", element.First, kv.Key, kv.Value);
+                            Console.WriteLine("| {0}\t| {1}\t\t| {2}\t|", element.First, kv.Key, kv.Value);
                     }
                 });
 
